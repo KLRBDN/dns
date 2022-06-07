@@ -1,105 +1,131 @@
 import pickle
+
+import record
+
 from dnslib import *
 
-from record import Record
-
 PORT = 53
-HOST = '127.0.0.1'
-DNS_HOST = '1.1.1.1'
-flag = False
+host = '127.0.0.1'
+dns_host = '8.8.8.8'
+cache = {}
+cache_name = 'cache.pickle'
+to_cache = False
+size = 1024
+
+
+def save():
+    with open(cache_name, 'wb') as write_file:
+        pickle.dump(cache, write_file)
+
+
+def load():
+    global cache
+    with open(cache_name, 'rb') as read_file:
+        cache = pickle.load(read_file)
+
+
+def send_request(server, pack):
+    try:
+        server.send(pack)
+        request, address = server.recvfrom(size)
+        return request
+    except Exception:
+        print('No response from server')
+        return
 
 
 def start_server():
-    global flag
     ttl = 20
-    save_cache({})
-    cache = load_cache()
+    global cache, to_cache
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as dns_server:
-            server.bind((HOST, PORT))
-            dns_server.connect((DNS_HOST, PORT))
+            server.bind((host, PORT))
+            dns_server.connect((dns_host, PORT))
             server.settimeout(5)
             dns_server.settimeout(5)
 
             print('Starting the server')
+
             while True:
                 try:
-                    u_request, u_address = server.recvfrom(1024)
+                    u_request, u_address = server.recvfrom(size)
                     u_data = DNSRecord.parse(u_request)
-                except TimeoutError:
-                    print('Request timeout')
+                except Exception:
+                    print(f'Request timeout: No requests in {int(server.gettimeout())} seconds')
                     continue
-                flag = True
+                to_cache = True
                 qname = str(u_data.q.qname)
                 if qname in cache:
                     rec = cache.get(qname)
                     query = u_data.reply()
-                    flag = False
+                    to_cache = False
                     if u_data.q.qtype == QTYPE.A and rec.A:
                         for addr in rec.A:
                             query.add_answer(
                                 dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.A, ttl=ttl,
                                        rdata=A(addr.data)))
                         for ns in rec.NS:
-                            query.add_auth(
-                                dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.NS, ttl=ttl,
-                                       rdata=NS(ns.label)))
+                            query.add_auth(dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.NS, ttl=ttl,
+                                                  rdata=NS(ns.label)))
+                        for e in rec.NSA:
+                            ns, ns_a = e
+                            if len(ns_a.data) == 4:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.A, ttl=ttl,
+                                                    rdata=A(ns_a.data)))
+                            elif len(ns_a.data) == 16:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.AAAA, ttl=ttl,
+                                                    rdata=AAAA(ns_a.data)))
                     elif u_data.q.qtype == QTYPE.AAAA and rec.AAAA:
                         for addr in rec.AAAA:
                             query.add_answer(
                                 dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.AAAA, ttl=ttl,
                                        rdata=AAAA(addr.data)))
                         for ns in rec.NS:
-                            query.add_auth(
-                                dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.NS, ttl=ttl,
-                                       rdata=NS(ns.label)))
+                            query.add_auth(dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.NS, ttl=ttl,
+                                                  rdata=NS(ns.label)))
+                        for e in rec.NSA:
+                            ns, ns_a = e
+                            if len(ns_a.data) == 4:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.A, ttl=ttl,
+                                                    rdata=A(ns_a.data)))
+                            elif len(ns_a.data) == 16:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.AAAA, ttl=ttl,
+                                                    rdata=AAAA(ns_a.data)))
                     elif u_data.q.qtype == QTYPE.PTR and rec.PTR:
-                        query.add_auth(
-                            dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.SOA, ttl=ttl,
-                                   rdata=rec.PTR))
+                        query.add_auth(dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.SOA, ttl=ttl,
+                                              rdata=rec.PTR))
                     elif u_data.q.qtype == QTYPE.NS and rec.NS:
                         for ns in rec.NS:
                             query.add_answer(
                                 dns.RR(rname=u_data.q.qname, rclass=u_data.q.qclass, rtype=QTYPE.NS, ttl=ttl,
                                        rdata=NS(ns.label)))
+                        for e in rec.NSA:
+                            ns, ns_a = e
+                            if len(ns_a.data) == 4:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.A, ttl=ttl,
+                                                    rdata=A(ns_a.data)))
+                            elif len(ns_a.data) == 16:
+                                query.add_ar(dns.RR(rname=ns.label, rclass=u_data.q.qclass, rtype=QTYPE.AAAA, ttl=ttl,
+                                                    rdata=AAAA(ns_a.data)))
                     else:
                         s_packet = send_request(dns_server, u_request)
                         s_data = DNSRecord.parse(s_packet)
                         cache.get(qname).add_record(s_data)
+                        print('Added packet to cache')
                         server.sendto(s_packet, u_address)
-                        print('Added to cache')
                         continue
-                if flag:
+                if to_cache:
                     s_packet = send_request(dns_server, u_request)
                     s_data = DNSRecord.parse(s_packet)
-                    cache[qname] = Record(qname)
+                    cache[qname] = record.Record(qname)
                     cache.get(qname).add_record(s_data)
-                    print('Added to cache')
+                    print('Added packet to cache')
                     server.sendto(s_packet, u_address)
                 else:
                     server.sendto(query.pack(), u_address)
-                save_cache(cache)
+                print('Packet was successfully sent')
+                save()
                 cache = {}
-
-
-def send_request(dns_server, packet):
-    try:
-        dns_server.send(packet)
-        request, address = dns_server.recvfrom(1024)
-        return request
-    except TimeoutError:
-        print('Server timeout')
-        return
-
-
-def save_cache(cache):
-    with open("cache.pickle", "wb") as file:
-        pickle.dump(cache, file)
-
-
-def load_cache():
-    with open("cache.pickle", "rb") as file:
-        return pickle.load(file)
 
 
 def main():
